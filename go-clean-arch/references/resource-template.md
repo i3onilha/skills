@@ -28,7 +28,7 @@ Create `internal/repository/mysql/<resource>/` directory (lowercase, singular).
 Create `<resource>.sql` with named queries:
 
 ```sql
--- name: Get<ResourceByID> :one
+-- name: Get<Resource>ByID :one
 SELECT <columns> FROM <table>
 WHERE <resource_id>_id = ?;
 
@@ -82,7 +82,7 @@ package domain
 
 // Core business entity — decoupled from API shapes and DB models
 type <Resource> struct {
-    <Resource>Id int32   `json:"<resource_id>_id,omitempty"`
+    <Resource>ID int32   `json:"<resource_id>_id,omitempty"`
     // ... fields based on what the user described
 }
 
@@ -105,6 +105,7 @@ Key rules:
 - Domain entities contain business logic (validations, calculations)
 - Use `omitempty` on JSON tags for optional fields
 - Response structs mirror what the repository returns after mapping from sqlc models
+- Use Go convention `ID` suffix (e.g., `UserID`, `OrderID`), not `Id`
 
 ### 4. DTO layer
 
@@ -150,6 +151,7 @@ Key rules:
 - Interfaces accept `context.Context` as first param
 - Return domain types, not sqlc types or DTOs
 - Name methods descriptively: `GetUserInfo`, `GetOrdersByUserID`
+- Do **not** add context timeouts here — set the timeout once at the usecase level
 
 ### 6. Repository implementation
 
@@ -161,7 +163,6 @@ package mysql
 import (
     "context"
     "database/sql"
-    "time"
     "go-clean-example/internal/domain"
     "go-clean-example/internal/repository"
     "go-clean-example/internal/repository/mysql/<resource>"
@@ -176,24 +177,18 @@ func New<Resource>Repository(db *sql.DB) repository.<Resource>Repository {
 }
 
 func (r *<resource>Repository) Get<Resource>Info(ctx context.Context, id int32) (*domain.Get<Resource>Response, error) {
-    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-    defer cancel()
-
     result, err := r.query.Get<Resource>ByID(ctx, id)
     if err != nil {
         return nil, err
     }
     return &domain.Get<Resource>Response{
         // map sqlc result to domain
-        <Resource>Id: result.<Resource>ID,
+        <Resource>ID: result.<Resource>ID,
         // ...
     }, nil
 }
 
 func (r *<resource>Repository) Get<Resource>sBy<Condition>(ctx context.Context, param <Type>) (*domain.Get<Resource>sResponse, error) {
-    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-    defer cancel()
-
     results, err := r.query.Get<Resource>sBy<Condition>(ctx, param)
     if err != nil {
         return nil, err
@@ -202,6 +197,8 @@ func (r *<resource>Repository) Get<Resource>sBy<Condition>(ctx context.Context, 
     for _, row := range results {
         items = append(items, &domain.<Resource>{
             // map each row
+            // For sql.NullString fields, check .Valid before accessing .String:
+            // Field: func() string { if row.Field.Valid { return row.Field.String }; return "" }(),
         })
     }
     return &domain.Get<Resource>sResponse{Items: items}, nil
@@ -209,8 +206,8 @@ func (r *<resource>Repository) Get<Resource>sBy<Condition>(ctx context.Context, 
 ```
 
 Key rules:
-- Every method adds a 5-second context timeout
-- Map sqlc types to domain types (handle `sql.NullString` → `.String`)
+- Do **not** add context timeouts here — set the timeout once at the usecase (entry) level
+- Map sqlc types to domain types (handle `sql.NullString` → check `.Valid` before `.String`)
 - The struct is unexported; the constructor returns the interface
 
 ### 7. Usecase interface
@@ -244,6 +241,7 @@ package usecase
 
 import (
     "context"
+    "time"
     "go-clean-example/internal/dto"
     "go-clean-example/internal/repository"
     "github.com/adityaeka26/go-pkg/logger"
@@ -262,6 +260,10 @@ func New<Resource>Usecase(logger *logger.Logger, repo repository.<Resource>Repos
 }
 
 func (u *<resource>Usecase) Get<Resource>ByID(ctx context.Context, id int32) (*dto.<Resource>Response, error) {
+    // Set timeout once at the entry point
+    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+    defer cancel()
+
     // 1. Fetch from repository
     info, err := u.<resource>Repo.Get<Resource>Info(ctx, id)
     if err != nil {
@@ -269,19 +271,22 @@ func (u *<resource>Usecase) Get<Resource>ByID(ctx context.Context, id int32) (*d
     }
 
     // 2. Fetch related data if needed
-    related, err := u.<resource>Repo.Get<Related>(ctx, id)
-    if err != nil {
-        return nil, err
-    }
+    // NOTE: This requires a Get<Related> method defined on your repository interface
+    // and implemented in the repository layer. Add it if your usecase needs it.
+    // related, err := u.<resource>Repo.Get<Related>(ctx, id)
+    // if err != nil {
+    //     return nil, err
+    // }
 
     // 3. Apply business logic (calculations, transformations)
-    items := make([]dto.<Resource>Item, len(related.Items))
-    for i, item := range related.Items {
-        computed := item.CalculateFinalPrice()
-        items[i] = dto.<Resource>Item{
-            // map domain → DTO with business logic applied
-        }
-    }
+    // Example: if your domain entity has a CalculateFinalPrice method:
+    // items := make([]dto.<Resource>Item, len(related.Items))
+    // for i, item := range related.Items {
+    //     computed := item.CalculateFinalPrice()
+    //     items[i] = dto.<Resource>Item{
+    //         // map domain → DTO with business logic applied
+    //     }
+    // }
 
     // 4. Build response
     return &dto.<Resource>Response{
@@ -293,7 +298,9 @@ func (u *<resource>Usecase) Get<Resource>ByID(ctx context.Context, id int32) (*d
 Key rules:
 - Constructor accepts interfaces (not concrete types) — enables testing
 - Use `*logger.Logger` from `github.com/adityaeka26/go-pkg`
+- Set context timeout **once** at the usecase entry point; do not add nested timeouts in repository methods
 - Orchestrate repository calls, apply business logic, build DTO responses
+- Any "fetch related data" step requires methods that you must define on your repository interface
 
 ### 9. Controller
 
@@ -365,7 +372,7 @@ func registerRoutes(
 ) {
     user := router.Group("/api/users")
     {
-        user.GET("/:id/orders", userController.GetUsersByUserID)
+        user.GET("/:id/orders", userController.GetOrdersByUserID)
     }
 
     <resource>s := router.Group("/api/<resource>s")          // ← new
@@ -387,8 +394,9 @@ func registerRoutes(
 
 The existing project demonstrates this pattern with a USER resource that:
 - Fetches user profile info (`GetUserByID :one`)
-- Fetches user orders with discount data via LEFT JOIN (`GetOrdersByUserID :many`)
+- Fetches user orders with discount data via LEFT JOIN with aggregation (`GetOrdersByUserID :many`)
 - Calculates `final_price = quantity * price * (1 - discount_percent/100)` in the domain layer
 - Returns a combined response with user info + order items with computed prices
+- Supports pagination via `LIMIT ? OFFSET ?` parameters
 
 Use this as a reference when creating resources that involve joins and calculated fields.

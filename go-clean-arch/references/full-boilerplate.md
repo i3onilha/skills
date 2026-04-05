@@ -21,7 +21,7 @@ Initialize with `go mod init go-clean-example`, then add dependencies:
 ```
 github.com/adityaeka26/go-pkg v0.9.9
 github.com/gin-contrib/cors v1.7.7
-github.com/gin-gonic/gin v1.12.0
+github.com/gin-gonic/gin v1.11.0
 github.com/go-sql-driver/mysql v1.9.3
 github.com/spf13/viper v1.19.0
 go.uber.org/fx v1.24.0
@@ -183,7 +183,10 @@ func loadConfig(filename string) *EnvConfig {
 	viper.SetConfigType("env")
 	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err != nil {
-		panic(err)
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			panic(err)
+		}
+		// Continue with environment variables only
 	}
 	if err := viper.Unmarshal(&envCfg); err != nil {
 		panic(err)
@@ -255,11 +258,13 @@ WHERE user_id = ?;
 
 -- name: GetOrdersByUserID :many
 SELECT o.order_id, o.user_id, o.item, o.quantity, o.price,
-       COALESCE(d.discount_percent, 0) as discount_percent
+       COALESCE(SUM(d.discount_percent), 0) as discount_percent
 FROM orders o
 LEFT JOIN discounts d ON o.order_id = d.order_id
 WHERE o.user_id = ?
-LIMIT 100;
+GROUP BY o.order_id, o.user_id, o.item, o.quantity, o.price
+ORDER BY o.order_id
+LIMIT ? OFFSET ?;
 ```
 
 ### `internal/repository/mysql/conn.go`
@@ -306,8 +311,8 @@ import (
 )
 
 type UserRepository interface {
-	GetUserInfo(ctx context.Context, userId int32) (*domain.GetUserInfoResponse, error)
-	GetOrdersByUserID(ctx context.Context, userId int32) (*domain.GetOrdersResponse, error)
+	GetUserInfo(ctx context.Context, userID int32) (*domain.GetUserInfoResponse, error)
+	GetOrdersByUserID(ctx context.Context, userID int32, limit, offset int) (*domain.GetOrdersResponse, error)
 }
 ```
 
@@ -319,7 +324,6 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"time"
 	"go-clean-example/internal/domain"
 	"go-clean-example/internal/repository"
 	"go-clean-example/internal/repository/mysql/user"
@@ -334,32 +338,32 @@ func NewUserRepository(db *sql.DB) repository.UserRepository {
 }
 
 func (r *userRepository) GetUserInfo(ctx context.Context, userID int32) (*domain.GetUserInfoResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	usr, err := r.query.GetUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	return &domain.GetUserInfoResponse{
-		UserId:   usr.UserID,
+		UserID:   usr.UserID,
 		Name:     usr.Name,
 		Email:    usr.Email,
-		Location: usr.Location.String,
+		Location: func() string { if usr.Location.Valid { return usr.Location.String }; return "" }(),
 	}, nil
 }
 
-func (r *userRepository) GetOrdersByUserID(ctx context.Context, userId int32) (*domain.GetOrdersResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	orders, err := r.query.GetOrdersByUserID(ctx, userId)
+func (r *userRepository) GetOrdersByUserID(ctx context.Context, userID int32, limit, offset int) (*domain.GetOrdersResponse, error) {
+	orders, err := r.query.GetOrdersByUserID(ctx, user.GetOrdersByUserIDParams{
+		UserID: userID,
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
 	if err != nil {
 		return nil, err
 	}
 	ordersResponse := make([]*domain.Order, 0, len(orders))
 	for _, o := range orders {
 		ordersResponse = append(ordersResponse, &domain.Order{
-			UserId:          int32(o.UserID),
-			OrderId:         int32(o.OrderID),
+			UserID:          int32(o.UserID),
+			OrderID:         int32(o.OrderID),
 			Item:            o.Item,
 			Quantity:        int32(o.Quantity),
 			Price:           o.Price,
@@ -376,8 +380,8 @@ func (r *userRepository) GetOrdersByUserID(ctx context.Context, userId int32) (*
 package domain
 
 type Order struct {
-	OrderId         int32   `json:"order_id,omitempty"`
-	UserId          int32   `json:"user_id,omitempty"`
+	OrderID         int32   `json:"order_id,omitempty"`
+	UserID          int32   `json:"user_id,omitempty"`
 	Item            string  `json:"item,omitempty"`
 	Quantity        int32   `json:"quantity,omitempty"`
 	Price           float64 `json:"price,omitempty"`
@@ -396,7 +400,7 @@ type GetOrdersResponse struct {
 }
 
 type GetUserInfoResponse struct {
-	UserId   int32  `json:"user_id,omitempty"`
+	UserID   int32  `json:"user_id,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Email    string `json:"email,omitempty"`
 	Location string `json:"location,omitempty"`
@@ -409,15 +413,15 @@ type GetUserInfoResponse struct {
 package dto
 
 type UserResponse struct {
-	UserId   int32   `json:"user_id"`
+	UserID   int32   `json:"user_id"`
 	Name     string  `json:"name"`
 	Email    string  `json:"email"`
 	Location string  `json:"location"`
-	Orders    []Order `json:"orders"`
+	Orders   []Order `json:"orders"`
 }
 
 type Order struct {
-	UserId     int32   `json:"user_id"`
+	UserID     int32   `json:"user_id"`
 	Item       string  `json:"item"`
 	Quantity   int32   `json:"quantity"`
 	Price      float64 `json:"price"`
@@ -437,7 +441,7 @@ import (
 )
 
 type UserUsecase interface {
-	GetOrdersByUserID(ctx context.Context, id int32) (*dto.UserResponse, error)
+	GetOrdersByUserID(ctx context.Context, id int32, limit, offset int) (*dto.UserResponse, error)
 }
 ```
 
@@ -466,15 +470,15 @@ func NewUserUsecase(logger *logger.Logger, userRepo repository.UserRepository) U
 	}
 }
 
-func (u *userUsecase) GetOrdersByUserID(ctx context.Context, userId int32) (*dto.UserResponse, error) {
+func (u *userUsecase) GetOrdersByUserID(ctx context.Context, userID int32, limit, offset int) (*dto.UserResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	user, err := u.userRepository.GetUserInfo(ctx, userId)
+	user, err := u.userRepository.GetUserInfo(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	orders, err := u.userRepository.GetOrdersByUserID(ctx, user.UserId)
+	orders, err := u.userRepository.GetOrdersByUserID(ctx, user.UserID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +486,7 @@ func (u *userUsecase) GetOrdersByUserID(ctx context.Context, userId int32) (*dto
 	for i, order := range orders.Orders {
 		finalPrice := order.CalculateFinalPrice()
 		ordersResp[i] = dto.Order{
-			UserId:     order.UserId,
+			UserID:     order.UserID,
 			Item:       order.Item,
 			Quantity:   order.Quantity,
 			Price:      order.Price,
@@ -491,11 +495,11 @@ func (u *userUsecase) GetOrdersByUserID(ctx context.Context, userId int32) (*dto
 		}
 	}
 	return &dto.UserResponse{
-		UserId:   user.UserId,
+		UserID:   user.UserID,
 		Name:     user.Name,
 		Email:    user.Email,
 		Location: user.Location,
-		Orders:    ordersResp,
+		Orders:   ordersResp,
 	}, nil
 }
 ```
@@ -529,7 +533,17 @@ func (h *UserController) GetOrdersByUserID(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID"})
 		return
 	}
-	resp, err := h.usecase.GetOrdersByUserID(c.Request.Context(), int32(userID))
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	resp, err := h.usecase.GetOrdersByUserID(c.Request.Context(), int32(userID), limit, offset)
 	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
@@ -597,30 +611,35 @@ func runServer(lc fx.Lifecycle, router *gin.Engine, db *sql.DB) {
 		Addr:    ":" + cfg.RestPort,
 		Handler: router,
 	}
+	errCh := make(chan error, 1)
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			go func() {
 				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					log.Fatalf("Failed to start server: %v", err)
+					errCh <- err
 				}
 			}()
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			log.Println("Shutting down server...")
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := srv.Shutdown(shutdownCtx); err != nil {
-				log.Printf("Server shutdown error: %v", err)
+			// Check if server failed to start
+			select {
+			case err := <-errCh:
+				log.Printf("Server failed to start: %v", err)
 				return err
+			default:
 			}
-			log.Println("Server stopped, closing database connection...")
-			if err := db.Close(); err != nil {
-				log.Printf("Database close error: %v", err)
-				return err
+
+			log.Println("Shutting down server...")
+			shutdownErr := srv.Shutdown(ctx)
+			if closeErr := db.Close(); closeErr != nil && shutdownErr == nil {
+				return closeErr
+			}
+			if shutdownErr != nil {
+				log.Printf("Server shutdown error: %v", shutdownErr)
 			}
 			log.Println("Database connection closed")
-			return nil
+			return shutdownErr
 		},
 	})
 }
