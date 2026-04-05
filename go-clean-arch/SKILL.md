@@ -73,7 +73,9 @@ Create `internal/repository/mysql/<resource>/` (e.g. `internal/repository/mysql/
 - `<resource>.sql` — all SQL queries the resource needs (use sqlc directives: `:one`, `:many`, `:exec`)
 - Use `COALESCE`, `JOIN`, etc. as needed for calculated fields
 
-Then run `sqlc generate` to produce `models.go`, `db.go`, and `<resource>.sql.go`.
+> **Warning:** The `<resource>/` directory is reserved for sqlc-generated code (`models.go`, `db.go`, `<resource>.sql.go`). Do **not** place your `<resource>_repository.go` implementation file inside this directory — it belongs in `internal/repository/mysql/` as a sibling, not a child.
+
+> **Note:** The `.sql` file will be picked up after you update `sqlc.yaml` in Step 6. The `sqlc generate` command runs in the final verify step (Step 7).
 
 ### Step 4: Create all layer files
 
@@ -122,7 +124,7 @@ defer cancel()
 
 ### Error handling in controllers
 - Invalid params → `400 Bad Request`
-- `sql.ErrNoRows` → `404 Not Found`
+- `domain.ErrNotFound` → `404 Not Found` (define this sentinel error in the domain layer; the repository maps `sql.ErrNoRows` → `domain.ErrNotFound`)
 - Any other error → `500 Internal Server Error`
 
 ### sqlc rules
@@ -135,6 +137,20 @@ Use `sync.Once` + `atomic.Pointer` for thread-safe lazy init in `config/config.g
 
 ### DB connection
 Ping at startup with a 5s timeout (fail fast). Set pool tuning: `MaxOpenConns=25`, `MaxIdleConns=10`, `ConnMaxLifetime=5min`, `ConnMaxIdleTime=5min`.
+
+### Security — Authentication & Authorization
+- **Every endpoint should be behind authentication.** Never ship publicly accessible endpoints without auth.
+- **Recommended strategy:** JWT-based authentication via a Gin middleware. Validate the token, extract the user identity, and attach it to the request context.
+- **Middleware placement:** Insert auth middleware on the router group level in `registerRoutes`:
+  ```go
+  protected := router.Group("/api")
+  protected.Use(AuthMiddleware())  // validates JWT, sets user in context
+  {
+      protected.GET("/users/:id", userController.GetUser)
+  }
+  ```
+- **Authorization:** For resource-level access control (e.g., users can only edit their own data), add checks in the usecase layer after fetching the resource owner.
+- **Public endpoints:** If certain endpoints must be public (e.g., `/api/auth/login`), register them on a separate group without the auth middleware.
 
 ---
 

@@ -539,10 +539,24 @@ func (h *UserController) GetUserWithOrders(c *gin.Context) {
 		return
 	}
 
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	limitStr := c.DefaultQuery("limit", "20")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit parameter"})
+		return
+	}
 	if limit <= 0 {
 		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	offsetStr := c.DefaultQuery("offset", "0")
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid offset parameter"})
+		return
 	}
 	if offset < 0 {
 		offset = 0
@@ -632,6 +646,7 @@ func runServer(lc fx.Lifecycle, router *gin.Engine, db *sql.DB) {
 			select {
 			case err := <-errCh:
 				log.Printf("Server failed to start: %v", err)
+				_ = db.Close()
 				return err
 			default:
 			}

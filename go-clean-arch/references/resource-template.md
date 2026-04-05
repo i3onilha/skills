@@ -2,6 +2,8 @@
 
 This file provides templates and patterns for adding a new resource to an existing Clean Architecture Go project. Use this when the user says something like "Create a PRODUCT resource" or "Add a Category entity."
 
+> **⚠️ Module name substitution:** Replace `go-clean-example` with your actual module name from `go.mod` in all import paths throughout this file. Copy-pasting these templates without substitution will produce uncompilable code.
+
 ---
 
 ## Step-by-step workflow
@@ -11,6 +13,9 @@ This file provides templates and patterns for adding a new resource to an existi
 Add tables to `internal/repository/mysql/schema.sql`. Follow this pattern:
 
 ```sql
+-- ⚠️ WARNING: DROP TABLE IF EXISTS destroys all existing data in the table.
+-- This pattern is for initial setup only. For incremental schema changes to an
+-- existing database, use ALTER TABLE instead to avoid data loss.
 DROP TABLE IF EXISTS `<resource_plural>`;
 CREATE TABLE `<resource_plural>` (
   `<resource_id>_id` int NOT NULL AUTO_INCREMENT,
@@ -34,8 +39,11 @@ WHERE <resource_id>_id = ?;
 
 -- name: Get<Resources>By<Condition> :many
 SELECT <columns> FROM <table>
-WHERE <condition>;
+WHERE <condition>
+LIMIT ? OFFSET ?;
 ```
+
+> **Pagination:** All `:many` queries must include `LIMIT ? OFFSET ?` to prevent unbounded result sets that can cause memory exhaustion, slow responses, or denial-of-service.
 
 sqlc directives:
 - `:one` — returns a single row
@@ -43,24 +51,10 @@ sqlc directives:
 - `:exec` — execute, no return
 - `:execrows` — execute, return rows affected
 
-Then update `sqlc.yaml` to include the new `.sql` file:
+Then update `sqlc.yaml` to include the new `.sql` file. Add a new entry to the `sql` array:
 
 ```yaml
-sql:
-  - engine: "mysql"
-    queries: "internal/repository/mysql/user/user.sql"
-    schema: "internal/repository/mysql/schema.sql"
-    gen:
-      go:
-        package: "user"
-        out: "internal/repository/mysql/user"
-        emit_json_tags: true
-        overrides:
-          - db_type: "decimal"
-            go_type:
-              import: "github.com/shopspring/decimal"
-              type: "Decimal"
-  - engine: "mysql"                                    # ← new entry
+  - engine: "mysql"                                    # ← Append this to the existing sql: array
     queries: "internal/repository/mysql/<resource>/<resource>.sql"
     schema: "internal/repository/mysql/schema.sql"
     gen:
@@ -83,6 +77,13 @@ Run `sqlc generate` to produce the Go files.
 
 ```go
 package domain
+
+import "errors"
+
+// Sentinel errors for clean architecture separation.
+// The repository maps sql.ErrNoRows → ErrNotFound so controllers
+// never depend on database-specific errors.
+var ErrNotFound = errors.New("not found")
 
 // Core business entity — decoupled from API shapes and DB models
 type <Resource> struct {
@@ -146,7 +147,7 @@ import (
 )
 
 type <Resource>Repository interface {
-    Get<Resource>Info(ctx context.Context, id int32) (*domain.Get<Resource>Response, error)
+    Get<Resource>ByID(ctx context.Context, id int32) (*domain.Get<Resource>Response, error)
     Get<Resource>sBy<Condition>(ctx context.Context, param <Type>) (*domain.Get<Resource>sResponse, error)
 }
 ```
@@ -154,7 +155,7 @@ type <Resource>Repository interface {
 Key rules:
 - Interfaces accept `context.Context` as first param
 - Return domain types, not sqlc types or DTOs
-- Name methods descriptively: `GetUserInfo`, `GetOrdersByUserID`
+- Name methods consistently: use `Get<Resource>ByID` (matching the usecase layer naming)
 - Do **not** add context timeouts here — set the timeout once at the usecase level
 
 ### 6. Repository implementation
@@ -167,6 +168,7 @@ package mysql
 import (
     "context"
     "database/sql"
+    "errors"
     "go-clean-example/internal/domain"
     "go-clean-example/internal/repository"
     "go-clean-example/internal/repository/mysql/<resource>"
@@ -180,9 +182,12 @@ func New<Resource>Repository(db *sql.DB) repository.<Resource>Repository {
     return &<resource>Repository{query: *<resource>.New(db)}
 }
 
-func (r *<resource>Repository) Get<Resource>Info(ctx context.Context, id int32) (*domain.Get<Resource>Response, error) {
+func (r *<resource>Repository) Get<Resource>ByID(ctx context.Context, id int32) (*domain.Get<Resource>Response, error) {
     result, err := r.query.Get<Resource>ByID(ctx, id)
     if err != nil {
+        if errors.Is(err, sql.ErrNoRows) {
+            return nil, domain.ErrNotFound
+        }
         return nil, err
     }
     return &domain.Get<Resource>Response{
@@ -264,12 +269,17 @@ func New<Resource>Usecase(logger *logger.Logger, repo repository.<Resource>Repos
 }
 
 func (u *<resource>Usecase) Get<Resource>ByID(ctx context.Context, id int32) (*dto.<Resource>Response, error) {
-    // Set timeout once at the entry point
+    // Set timeout once at the entry point.
+    // When making multiple sequential repository calls, budget the timeout
+    // based on the number of calls. For example, with 3 sequential calls,
+    // a 5s total timeout gives ~1.6s per call. If one call is slow, the
+    // remaining calls inherit a shrinking deadline and may fail prematurely.
+    // Consider using errgroup for parallel fan-out when calls are independent.
     ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
     defer cancel()
 
     // 1. Fetch from repository
-    info, err := u.<resource>Repo.Get<Resource>Info(ctx, id)
+    info, err := u.<resource>Repo.Get<Resource>ByID(ctx, id)
     if err != nil {
         return nil, err
     }
@@ -301,8 +311,8 @@ func (u *<resource>Usecase) Get<Resource>ByID(ctx context.Context, id int32) (*d
 
 Key rules:
 - Constructor accepts interfaces (not concrete types) — enables testing
-- Use `*logger.Logger` from `github.com/adityaeka26/go-pkg`
-- Set context timeout **once** at the usecase entry point; do not add nested timeouts in repository methods
+- The logger package (`github.com/adityaeka26/go-pkg/logger`) must be added to your project via `go get github.com/adityaeka26/go-pkg`. Ensure it's in your `go.mod` before using these templates.
+- Set context timeout **once** at the usecase entry point; do not add nested timeouts in repository methods. When making multiple sequential calls, budget the total timeout across calls or use `errgroup` for parallel fan-out.
 - Orchestrate repository calls, apply business logic, build DTO responses
 - Any "fetch related data" step requires methods that you must define on your repository interface
 
@@ -314,20 +324,28 @@ Key rules:
 package controller
 
 import (
-    "database/sql"
     "errors"
-    "go-clean-example/internal/usecase"
+    "math"
     "net/http"
     "strconv"
+    "go-clean-example/internal/domain"
+    "go-clean-example/internal/usecase"
     "github.com/gin-gonic/gin"
 )
 
 type <Resource>Controller struct {
+    logger  Logger
     usecase usecase.<Resource>Usecase
 }
 
-func New<Resource>Controller(usecase usecase.<Resource>Usecase) *<Resource>Controller {
-    return &<Resource>Controller{usecase: usecase}
+// Logger is a minimal logging interface to avoid hard-depending on a specific package.
+// In practice, this is satisfied by most logger implementations (e.g. slog, zap, go-pkg/logger).
+type Logger interface {
+    Error(msg string, keysAndValues ...any)
+}
+
+func New<Resource>Controller(logger Logger, usecase usecase.<Resource>Usecase) *<Resource>Controller {
+    return &<Resource>Controller{logger: logger, usecase: usecase}
 }
 
 func (h *<Resource>Controller) Get<Resource>ByID(c *gin.Context) {
@@ -337,13 +355,18 @@ func (h *<Resource>Controller) Get<Resource>ByID(c *gin.Context) {
         c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID"})
         return
     }
+    if id > math.MaxInt32 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID"})
+        return
+    }
 
     resp, err := h.usecase.Get<Resource>ByID(c.Request.Context(), int32(id))
-    if errors.Is(err, sql.ErrNoRows) {
+    if errors.Is(err, domain.ErrNotFound) {
         c.JSON(http.StatusNotFound, gin.H{"error": "<resource> not found"})
         return
     }
     if err != nil {
+        h.logger.Error("failed to retrieve <resource>", "error", err)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve <resource>"})
         return
     }
@@ -353,8 +376,11 @@ func (h *<Resource>Controller) Get<Resource>ByID(c *gin.Context) {
 
 Key rules:
 - Parse and validate path/query params (return 400 on invalid input)
-- Map `sql.ErrNoRows` → 404, other errors → 500
+- Map `domain.ErrNotFound` → 404, other errors → 500
 - Delegate all business logic to the usecase — controllers are thin
+- Log unexpected errors at the error level before returning 500 responses
+- **Integer IDs:** The template casts to `int32` with a bounds check (`math.MaxInt32`). If your IDs exceed 2,147,483,647, use string IDs instead.
+- **String IDs (UUIDs, slugs):** Use `c.Param("id")` directly without `strconv.Atoi`. Pass the string to your usecase without conversion.
 
 ### 10. Wire into server.go
 
@@ -367,24 +393,66 @@ usecase.New<Resource>Usecase,
 controller.New<Resource>Controller,
 ```
 
-In `registerRoutes`, add the endpoint group:
+For route registration, avoid unbounded parameter growth on `registerRoutes` by defining a `RegisterRoutes` method on each controller. This keeps the function signature stable as you add resources.
+
+Define a `Registrable` interface:
+```go
+type Registrable interface {
+    RegisterRoutes(group *gin.RouterGroup)
+}
+```
+
+Then each controller implements it:
+```go
+func (h *<Resource>Controller) RegisterRoutes(group *gin.RouterGroup) {
+    res := group.Group("/<resource>s")
+    {
+        res.GET("/:id", h.Get<Resource>ByID)
+    }
+}
+```
+
+And `registerRoutes` becomes:
+```go
+func registerRoutes(
+    router *gin.Engine,
+    controllers ...Registrable,
+) {
+    api := router.Group("/api")
+    for _, c := range controllers {
+        c.RegisterRoutes(api)
+    }
+}
+```
+
+Invoke in `fx.Invoke`:
+```go
+fx.Invoke(registerRoutes,
+    controller.NewUserController,
+    controller.New<Resource>Controller,
+),
+```
+
+If you prefer the simpler approach (acceptable for small projects with few resources), you can pass controllers directly:
 ```go
 func registerRoutes(
     router *gin.Engine,
     userController *controller.UserController,
-    <resource>Controller *controller.<Resource>Controller,    // ← new
+    <resource>Controller *controller.<Resource>Controller,
 ) {
     user := router.Group("/api/users")
     {
-        user.GET("/:id/orders", userController.GetOrdersByUserID)
+        user.GET("/:id", userController.GetUser)
     }
 
-    <resource>s := router.Group("/api/<resource>s")          // ← new
+    <resource>s := router.Group("/api/<resource>s")
     {
         <resource>s.GET("/:id", <resource>Controller.Get<Resource>ByID)
     }
 }
 ```
+
+> **Recommendation:** Use the `Registrable` interface pattern when you expect more than ~5 resources to keep the codebase maintainable.
 
 ### 11. Verify
 
