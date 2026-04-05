@@ -57,7 +57,9 @@ sql:
         emit_json_tags: true
         overrides:
           - db_type: "decimal"
-            go_type: "float64"
+            go_type:
+              import: "github.com/shopspring/decimal"
+              type: "Decimal"
   - engine: "mysql"                                    # ← new entry
     queries: "internal/repository/mysql/<resource>/<resource>.sql"
     schema: "internal/repository/mysql/schema.sql"
@@ -68,7 +70,9 @@ sql:
         emit_json_tags: true
         overrides:
           - db_type: "decimal"
-            go_type: "float64"
+            go_type:
+              import: "github.com/shopspring/decimal"
+              type: "Decimal"
 ```
 
 Run `sqlc generate` to produce the Go files.

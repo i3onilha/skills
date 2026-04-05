@@ -6,14 +6,41 @@
       "name": "full-boilerplate",
       "prompt": "Create a new Go Clean Architecture project from scratch with MySQL, sqlc, Gin, and Uber FX. I want the full boilerplate with a USER resource that fetches user info along with their orders and calculates discount-adjusted final prices.",
       "expected_output": "Complete project structure with all config files (go.mod, docker-compose.yml, Dockerfile, sqlc.yaml, .env.example, .air.toml), config package, cmd/server/server.go with Uber FX DI, and a working USER resource across all layers (domain, dto, controller, usecase, repository with sqlc).",
-      "files": []
+      "files": [
+        "go.mod",
+        "docker-compose.yml",
+        "Dockerfile",
+        "sqlc.yaml",
+        ".env.example",
+        ".air.toml",
+        ".gitignore",
+        "config/config.go",
+        "cmd/server/server.go",
+        "internal/domain/user_domain.go",
+        "internal/dto/user_dto.go",
+        "internal/usecase/usecase.go",
+        "internal/usecase/user_usecase.go",
+        "internal/controller/user_controller.go",
+        "internal/repository/repository.go",
+        "internal/repository/mysql/conn.go",
+        "internal/repository/mysql/schema.sql",
+        "internal/repository/mysql/user/user.sql"
+      ]
     },
     {
       "id": 2,
       "name": "add-product-resource",
       "prompt": "Create a PRODUCT resource to manage inventory. Products have: id, name, sku, price, stock_quantity, category. I need endpoints to get a product by ID and list products by category. Also calculate the total inventory value (price * stock_quantity) for each product in the list response.",
       "expected_output": "New files: internal/domain/product_domain.go, internal/dto/product_dto.go, internal/controller/product_controller.go, internal/usecase/product_usecase.go, internal/repository/product_repository.go (interface added to repository.go), internal/repository/mysql/product/product.sql, internal/repository/mysql/product/product_repository.go. Updated cmd/server/server.go with DI wiring and route registration. Updated sqlc.yaml with product entry. schema.sql with products table and seed data.",
-      "files": [],
+      "files": [
+        "internal/domain/product_domain.go",
+        "internal/dto/product_dto.go",
+        "internal/controller/product_controller.go",
+        "internal/usecase/product_usecase.go",
+        "internal/repository/product_repository.go",
+        "internal/repository/mysql/product/product.sql",
+        "internal/repository/mysql/product/product_repository.go"
+      ],
       "content_checks": [
         {
           "file": "internal/domain/product_domain.go",
@@ -28,9 +55,23 @@
     {
       "id": 3,
       "name": "add-order-resource-with-joins",
-      "prompt": "Create an ORDER resource that returns order details along with the user who placed it. Each order has: id, user_id, item, quantity, price. Join with the users table to include buyer name and email in the response. Also add a 5-second timeout to repository queries.",
-      "expected_output": "New files across all layers for ORDER resource. SQL query uses JOIN between orders and users tables. Domain layer includes business entity and response types. DTO shapes the API response with combined order+buyer info. Repository implementation uses sqlc-generated queries with 5s context timeout. Controller handles parameter validation and error mapping.",
-      "files": []
+      "prompt": "Create an ORDER resource that returns order details along with the user who placed it. Each order has: id, user_id, item, quantity, price. Join with the users table to include buyer name and email in the response. The usecase sets a 5-second timeout for the overall operation.",
+      "expected_output": "New files across all layers for ORDER resource. SQL query uses JOIN between orders and users tables. Domain layer includes business entity and response types. DTO shapes the API response with combined order+buyer info. Repository implementation uses sqlc-generated queries. Controller handles parameter validation and error mapping.",
+      "files": [
+        "internal/domain/order_domain.go",
+        "internal/dto/order_dto.go",
+        "internal/controller/order_controller.go",
+        "internal/usecase/order_usecase.go",
+        "internal/repository/order_repository.go",
+        "internal/repository/mysql/order/order.sql",
+        "internal/repository/mysql/order/order_repository.go"
+      ],
+      "content_checks": [
+        {
+          "file": "internal/usecase/order_usecase.go",
+          "must_contain": ["context.WithTimeout"]
+        }
+      ]
     }
   ]
 }

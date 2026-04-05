@@ -114,7 +114,7 @@ Add the new `.sql` file path to `sqlc.yaml` under the `sql` array so sqlc picks 
 Interfaces live in inner layers (`usecase/`, `repository/`), implementations in outer layers. The flow is always: **Controller → Usecase → Repository → Database**.
 
 ### Timeouts
-Every repository query gets a 5-second context timeout:
+Set a context timeout **once** at the usecase entry point (e.g., 5s). Do not add additional timeouts in repository methods:
 ```go
 ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 defer cancel()
@@ -128,7 +128,7 @@ defer cancel()
 ### sqlc rules
 - Never edit `models.go`, `db.go`, or `*.sql.go` — they're auto-generated
 - Only edit `.sql` files and `schema.sql`, then run `sqlc generate`
-- Use `overrides` in `sqlc.yaml` to map `decimal` → `float64`
+- Use `overrides` in `sqlc.yaml` to map `decimal` → `github.com/shopspring/decimal.Decimal`
 
 ### Config pattern
 Use `sync.Once` + `atomic.Pointer` for thread-safe lazy init in `config/config.go`.

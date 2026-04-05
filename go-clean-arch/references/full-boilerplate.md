@@ -23,6 +23,7 @@ github.com/adityaeka26/go-pkg v0.9.9
 github.com/gin-contrib/cors v1.7.7
 github.com/gin-gonic/gin v1.11.0
 github.com/go-sql-driver/mysql v1.9.3
+github.com/shopspring/decimal v1.4.0
 github.com/spf13/viper v1.19.0
 go.uber.org/fx v1.24.0
 ```
@@ -34,8 +35,6 @@ APP_ENV=development
 REST_PORT=3000
 APP_VERSION=1.0
 GRACEFUL_PERIOD=0
-USER_SERVICE_HOST=localhost:8000
-ORDER_SERVICE_HOST=localhost:8001
 MYSQL_USER=default
 MYSQL_PASSWORD=secret
 MYSQL_DATABASE=erp_sales
@@ -49,8 +48,6 @@ APP_ENV=development
 REST_PORT=3000
 APP_VERSION=1.0
 GRACEFUL_PERIOD=0
-USER_SERVICE_HOST=user-service:8000
-ORDER_SERVICE_HOST=order-service:8001
 MYSQL_USER=default
 MYSQL_PASSWORD=secret
 MYSQL_DATABASE=erp_sales
@@ -77,8 +74,7 @@ bin = "tmp/main"
 ```dockerfile
 FROM golang:1.25 AS builder
 WORKDIR /app
-COPY go.mod .
-COPY go.sum .
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go install golang.org/x/tools/cmd/godoc@v0.5.0
@@ -139,7 +135,9 @@ sql:
         emit_json_tags: true
         overrides:
           - db_type: "decimal"
-            go_type: "float64"
+            go_type:
+              import: "github.com/shopspring/decimal"
+              type: "Decimal"
 ```
 
 ### `config/config.go`
@@ -158,29 +156,26 @@ var (
 )
 
 type EnvConfig struct {
-	AppEnv           string `mapstructure:"APP_ENV"`
-	AppName          string `mapstructure:"APP_NAME"`
-	RestPort         string `mapstructure:"REST_PORT"`
-	AppVersion       string `mapstructure:"APP_VERSION"`
-	GracefulPeriod   int    `mapstructure:"GRACEFUL_PERIOD"`
-	UserServiceHost  string `mapstructure:"USER_SERVICE_HOST"`
-	OrderServiceHost string `mapstructure:"ORDER_SERVICE_HOST"`
-	DSN              string `mapstructure:"MYSQL_DSN"`
+	AppEnv         string `mapstructure:"APP_ENV"`
+	AppName        string `mapstructure:"APP_NAME"`
+	RestPort       string `mapstructure:"REST_PORT"`
+	AppVersion     string `mapstructure:"APP_VERSION"`
+	GracefulPeriod int    `mapstructure:"GRACEFUL_PERIOD"`
+	DSN            string `mapstructure:"MYSQL_DSN"`
 }
 
 func GetConfig() *EnvConfig {
 	once.Do(func() {
-		c := loadConfig(".env")
+		c := loadConfig()
 		cfg.Store(c)
 	})
 	return cfg.Load()
 }
 
-func loadConfig(filename string) *EnvConfig {
+func loadConfig() *EnvConfig {
 	var envCfg EnvConfig
 	viper.AddConfigPath(".")
-	viper.SetConfigName(filename)
-	viper.SetConfigType("env")
+	viper.SetConfigFile(".env")
 	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -379,31 +374,39 @@ func (r *userRepository) GetOrdersByUserID(ctx context.Context, userID int32, li
 ```go
 package domain
 
+import "github.com/shopspring/decimal"
+
 type Order struct {
-	OrderID         int32   `json:"order_id,omitempty"`
-	UserID          int32   `json:"user_id,omitempty"`
-	Item            string  `json:"item,omitempty"`
-	Quantity        int32   `json:"quantity,omitempty"`
-	Price           float64 `json:"price,omitempty"`
-	DiscountPercent float64 `json:"discount_percent,omitempty"`
+	OrderID         int32           `json:"order_id"`
+	UserID          int32           `json:"user_id"`
+	Item            string          `json:"item"`
+	Quantity        int32           `json:"quantity"`
+	Price           decimal.Decimal `json:"price"`
+	DiscountPercent decimal.Decimal `json:"discount_percent"`
 }
 
-func (d *Order) CalculateFinalPrice() float64 {
-    percent := d.DiscountPercent
-    if percent < 0 { percent = 0 }
-    if percent > 100 { percent = 100 }
-    return (float64(d.Quantity) * d.Price) * (1 - percent/100)
+func (d *Order) CalculateFinalPrice() decimal.Decimal {
+	percent := d.DiscountPercent
+	if percent.LessThan(decimal.Zero) {
+		percent = decimal.Zero
+	}
+	if percent.GreaterThan(decimal.NewFromInt(100)) {
+		percent = decimal.NewFromInt(100)
+	}
+	total := decimal.NewFromInt(int64(d.Quantity)).Mul(d.Price)
+	discountFactor := decimal.NewFromInt(100).Sub(percent).Div(decimal.NewFromInt(100))
+	return total.Mul(discountFactor)
 }
 
 type GetOrdersResponse struct {
-	Orders []*Order `json:"orders,omitempty"`
+	Orders []*Order `json:"orders"`
 }
 
 type GetUserInfoResponse struct {
-	UserID   int32  `json:"user_id,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Email    string `json:"email,omitempty"`
-	Location string `json:"location,omitempty"`
+	UserID   int32  `json:"user_id"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Location string `json:"location"`
 }
 ```
 
@@ -411,6 +414,8 @@ type GetUserInfoResponse struct {
 
 ```go
 package dto
+
+import "github.com/shopspring/decimal"
 
 type UserResponse struct {
 	UserID   int32   `json:"user_id"`
@@ -421,12 +426,12 @@ type UserResponse struct {
 }
 
 type Order struct {
-	UserID     int32   `json:"user_id"`
-	Item       string  `json:"item"`
-	Quantity   int32   `json:"quantity"`
-	Price      float64 `json:"price"`
-	Discount   float64 `json:"discount"`
-	FinalPrice float64 `json:"final_price"`
+	UserID     int32           `json:"user_id"`
+	Item       string          `json:"item"`
+	Quantity   int32           `json:"quantity"`
+	Price      decimal.Decimal `json:"price"`
+	Discount   decimal.Decimal `json:"discount"`
+	FinalPrice decimal.Decimal `json:"final_price"`
 }
 ```
 
@@ -441,7 +446,7 @@ import (
 )
 
 type UserUsecase interface {
-	GetOrdersByUserID(ctx context.Context, id int32, limit, offset int) (*dto.UserResponse, error)
+	GetUserWithOrders(ctx context.Context, id int32, limit, offset int) (*dto.UserResponse, error)
 }
 ```
 
@@ -470,7 +475,7 @@ func NewUserUsecase(logger *logger.Logger, userRepo repository.UserRepository) U
 	}
 }
 
-func (u *userUsecase) GetOrdersByUserID(ctx context.Context, userID int32, limit, offset int) (*dto.UserResponse, error) {
+func (u *userUsecase) GetUserWithOrders(ctx context.Context, userID int32, limit, offset int) (*dto.UserResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -526,7 +531,7 @@ func NewUserController(usecase usecase.UserUsecase) *UserController {
 	return &UserController{usecase: usecase}
 }
 
-func (h *UserController) GetOrdersByUserID(c *gin.Context) {
+func (h *UserController) GetUserWithOrders(c *gin.Context) {
 	idParam := c.Param("id")
 	userID, err := strconv.Atoi(idParam)
 	if err != nil || userID <= 0 {
@@ -543,13 +548,13 @@ func (h *UserController) GetOrdersByUserID(c *gin.Context) {
 		offset = 0
 	}
 
-	resp, err := h.usecase.GetOrdersByUserID(c.Request.Context(), int32(userID), limit, offset)
+	resp, err := h.usecase.GetUserWithOrders(c.Request.Context(), int32(userID), limit, offset)
 	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve orders by user id"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve user with orders"})
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -579,7 +584,8 @@ import (
 )
 
 func newRouter(db *sql.DB) *gin.Engine {
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery())
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -647,7 +653,7 @@ func runServer(lc fx.Lifecycle, router *gin.Engine, db *sql.DB) {
 func registerRoutes(router *gin.Engine, userController *controller.UserController) {
 	user := router.Group("/api/users")
 	{
-		user.GET("/:id/orders", userController.GetOrdersByUserID)
+		user.GET("/:id/orders", userController.GetUserWithOrders)
 	}
 }
 
