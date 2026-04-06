@@ -36,7 +36,8 @@ When the user asks to create the entire project from scratch, follow the detaile
 After creating all files:
 1. Run `go mod tidy`
 2. Run `sqlc generate`
-3. Verify the build: `go build ./cmd/server/server.go`
+3. Run `gofmt -s -w .` to simplify and format all Go files
+4. Verify the build: `go build ./cmd/server/server.go`
 
 **Then ask the user**: "The boilerplate is ready. Would you like me to add any additional resources on top of it?"
 
@@ -106,7 +107,8 @@ Add the new `.sql` file path to `sqlc.yaml` under the `sql` array so sqlc picks 
 
 1. Run `go mod tidy`
 2. Run `sqlc generate` (if you added/modified `.sql` files)
-3. Build: `go build ./cmd/server/server.go`
+3. Run `gofmt -s -w .` to simplify and format all Go files
+4. Build: `go build ./cmd/server/server.go`
 
 ---
 
