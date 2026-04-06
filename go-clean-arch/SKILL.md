@@ -114,7 +114,55 @@ Add the new `.sql` file path to `sqlc.yaml` under the `sql` array so sqlc picks 
 
 ## Key Conventions (Always Follow)
 
-### Dependency Rule
+### Clean Architecture Dependency Rule — Business Logic in Domain Layer Only
+
+**Business logic MUST reside ONLY in the domain layer (`internal/domain/`) as methods on domain entities.**
+
+The data flow is strictly:
+```
+Repository → Domain (business logic) → Usecase (orchestration) → Controller
+```
+
+**Never:**
+```
+Repository → Usecase (with business logic) → Controller  ← WRONG
+```
+
+**Rules:**
+- **Domain layer** (`internal/domain/`): Contains ALL business logic — validations, calculations, transformations, business rules. Implemented as methods on domain entities (e.g., `order.CalculateFinalPrice()`, `user.IsValidEmail()`).
+- **Usecase layer**: ONLY orchestrates repository calls and delegates to domain methods. It should NOT contain business logic. It coordinates data flow: fetch from repository → apply domain methods → build DTO response.
+- **Repository layer**: ONLY maps database/sqlc types to domain types and handles data retrieval/persistence. No business logic.
+- **Controller layer**: ONLY parses HTTP params, delegates to usecase, and returns JSON responses. No business logic.
+
+**Example of correct separation:**
+```go
+// ✅ Domain layer — business logic lives here
+func (o *Order) CalculateFinalPrice() decimal.Decimal {
+    discountFactor := decimal.NewFromInt(100).Sub(o.DiscountPercent).Div(decimal.NewFromInt(100))
+    return decimal.NewFromInt(int64(o.Quantity)).Mul(o.Price).Mul(discountFactor)
+}
+
+// ✅ Usecase layer — orchestration only
+func (u *userUsecase) GetUserWithOrders(ctx context.Context, userID int32) (*dto.UserResponse, error) {
+    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+    defer cancel()
+
+    orders, err := u.userRepo.GetOrdersByUserID(ctx, userID)
+    if err != nil {
+        return nil, err
+    }
+
+    // Delegate to domain method — do NOT calculate here
+    items := make([]dto.Order, len(orders.Orders))
+    for i, order := range orders.Orders {
+        finalPrice := order.CalculateFinalPrice()  // ← domain method
+        items[i] = dto.Order{FinalPrice: finalPrice}
+    }
+    return &dto.UserResponse{Orders: items}, nil
+}
+```
+
+### Dependency Direction
 Interfaces live in inner layers (`usecase/`, `repository/`), implementations in outer layers. The flow is always: **Controller → Usecase → Repository → Database**.
 
 ### Timeouts

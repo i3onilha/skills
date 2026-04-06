@@ -91,7 +91,8 @@ type <Resource> struct {
     // ... fields based on what the user described
 }
 
-// Business logic methods
+// Business logic methods — ALL validations, calculations, and transformations
+// live here as methods on domain entities. Usecases delegate to these methods.
 func (d *<Resource>) <CalculateSomething>(...) <ReturnType> {
     // business rule implementation
 }
@@ -107,7 +108,9 @@ type Get<Resource>sResponse struct {
 ```
 
 Key rules:
-- Domain entities contain business logic (validations, calculations)
+- **ALL business logic goes here** — validations, calculations, data transformations, business rules
+- Implement as methods on domain entities (e.g., `order.CalculateFinalPrice()`, `user.CanAccessResource()`)
+- Usecases should NEVER contain business logic — they only orchestrate and delegate to these domain methods
 - Use `omitempty` on JSON tags for optional fields
 - Response structs mirror what the repository returns after mapping from sqlc models
 - Use Go convention `ID` suffix (e.g., `UserID`, `OrderID`), not `Id`
@@ -292,15 +295,21 @@ func (u *<resource>Usecase) Get<Resource>ByID(ctx context.Context, id int32) (*d
     //     return nil, err
     // }
 
-    // 3. Apply business logic (calculations, transformations)
-    // Example: if your domain entity has a CalculateFinalPrice method:
+    // 3. Apply business logic — DELEGATE to domain entity methods
+    // IMPORTANT: Do NOT implement business logic here. Instead, call methods
+    // defined on domain entities in the domain layer. The usecase only orchestrates.
+    //
+    // Example — CORRECT: delegate to domain method
     // items := make([]dto.<Resource>Item, len(related.Items))
     // for i, item := range related.Items {
-    //     computed := item.CalculateFinalPrice()
+    //     finalPrice := item.CalculateFinalPrice()  // ← domain method
     //     items[i] = dto.<Resource>Item{
-    //         // map domain → DTO with business logic applied
+    //         FinalPrice: finalPrice,
     //     }
     // }
+    //
+    // Example — WRONG: business logic in usecase
+    // finalPrice := quantity.Mul(price).Mul(decimal.NewFromInt(100).Sub(discount).Div(decimal.NewFromInt(100)))  // ← NOT here!
 
     // 4. Build response
     return &dto.<Resource>Response{
@@ -313,7 +322,7 @@ Key rules:
 - Constructor accepts interfaces (not concrete types) — enables testing
 - The logger package (`github.com/adityaeka26/go-pkg/logger`) must be added to your project via `go get github.com/adityaeka26/go-pkg`. Ensure it's in your `go.mod` before using these templates.
 - Set context timeout **once** at the usecase entry point; do not add nested timeouts in repository methods. When making multiple sequential calls, budget the total timeout across calls or use `errgroup` for parallel fan-out.
-- Orchestrate repository calls, apply business logic, build DTO responses
+- **Usecases only orchestrate** — fetch from repository, delegate to domain methods, build DTO responses. Never implement business logic (calculations, validations, transformations) here.
 - Any "fetch related data" step requires methods that you must define on your repository interface
 
 ### 9. Controller

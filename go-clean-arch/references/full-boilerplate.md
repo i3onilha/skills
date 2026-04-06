@@ -390,6 +390,8 @@ type Order struct {
 	DiscountPercent decimal.Decimal `json:"discount_percent"`
 }
 
+// CalculateFinalPrice contains business logic that MUST live in the domain layer.
+// Usecases delegate to this method — they never reimplement this logic.
 func (d *Order) CalculateFinalPrice() decimal.Decimal {
 	percent := d.DiscountPercent
 	if percent.LessThan(decimal.Zero) {
@@ -492,9 +494,10 @@ func (u *userUsecase) GetUserWithOrders(ctx context.Context, userID int32, limit
 	if err != nil {
 		return nil, err
 	}
+	// Orchestration only: delegate to domain entity method for business logic
 	ordersResp := make([]dto.Order, len(orders.Orders))
 	for i, order := range orders.Orders {
-		finalPrice := order.CalculateFinalPrice()
+		finalPrice := order.CalculateFinalPrice() // ← business logic in domain layer
 		ordersResp[i] = dto.Order{
 			UserID:     order.UserID,
 			Item:       order.Item,
