@@ -198,19 +198,18 @@ Full MySQL dump with 3 tables and seed data:
 -- MySQL dump 10.13  Distrib 8.0.33, for Linux (x86_64)
 -- Host: localhost    Database: erp_sales
 
-DROP TABLE IF EXISTS `discounts`;
-CREATE TABLE `discounts` (
-  `discount_id` int NOT NULL AUTO_INCREMENT,
-  `order_id` int NOT NULL,
-  `discount_percent` decimal(5,2) NOT NULL,
-  `description` varchar(255) DEFAULT NULL,
-  PRIMARY KEY (`discount_id`),
-  KEY `order_id` (`order_id`),
-  CONSTRAINT `discounts_ibfk_1` FOREIGN KEY (`order_id`) REFERENCES `orders` (`order_id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+DROP TABLE IF EXISTS `users`;
+CREATE TABLE `users` (
+  `user_id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(100) NOT NULL,
+  `email` varchar(255) NOT NULL,
+  `location` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`user_id`),
+  UNIQUE KEY `email` (`email`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-LOCK TABLES `discounts` WRITE;
-INSERT INTO `discounts` VALUES (1,1,10.00,'Promo on laptop'),(2,3,5.00,'Keyboard sale'),(3,4,15.00,'Bulk monitor discount');
+LOCK TABLES `users` WRITE;
+INSERT INTO `users` VALUES (1,'Alice Johnson','alice@example.com','New York'),(2,'Bob Smith','bob@example.com','Los Angeles'),(3,'Charlie Brown','charlie@example.com','Chicago'),(4,'Diana Prince','diana@example.com','Miami');
 UNLOCK TABLES;
 
 DROP TABLE IF EXISTS `orders`;
@@ -229,18 +228,19 @@ LOCK TABLES `orders` WRITE;
 INSERT INTO `orders` VALUES (1,1,'Laptop',1,1200.00),(2,1,'Mouse',2,25.50),(3,2,'Keyboard',1,75.00),(4,3,'Monitor',2,300.00),(5,4,'Headphones',1,150.00),(6,2,'Webcam',1,90.00);
 UNLOCK TABLES;
 
-DROP TABLE IF EXISTS `users`;
-CREATE TABLE `users` (
-  `user_id` int NOT NULL AUTO_INCREMENT,
-  `name` varchar(100) NOT NULL,
-  `email` varchar(255) NOT NULL,
-  `location` varchar(255) DEFAULT NULL,
-  PRIMARY KEY (`user_id`),
-  UNIQUE KEY `email` (`email`)
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+DROP TABLE IF EXISTS `discounts`;
+CREATE TABLE `discounts` (
+  `discount_id` int NOT NULL AUTO_INCREMENT,
+  `order_id` int NOT NULL,
+  `discount_percent` decimal(5,2) NOT NULL,
+  `description` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`discount_id`),
+  KEY `order_id` (`order_id`),
+  CONSTRAINT `discounts_ibfk_1` FOREIGN KEY (`order_id`) REFERENCES `orders` (`order_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-LOCK TABLES `users` WRITE;
-INSERT INTO `users` VALUES (1,'Alice Johnson','alice@example.com','New York'),(2,'Bob Smith','bob@example.com','Los Angeles'),(3,'Charlie Brown','charlie@example.com','Chicago'),(4,'Diana Prince','diana@example.com','Miami');
+LOCK TABLES `discounts` WRITE;
+INSERT INTO `discounts` VALUES (1,1,10.00,'Promo on laptop'),(2,3,5.00,'Keyboard sale'),(3,4,15.00,'Bulk monitor discount');
 UNLOCK TABLES;
 ```
 
