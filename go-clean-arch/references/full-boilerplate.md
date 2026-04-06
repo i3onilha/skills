@@ -341,7 +341,12 @@ func (r *userRepository) GetUserInfo(ctx context.Context, userID int32) (*domain
 		UserID:   usr.UserID,
 		Name:     usr.Name,
 		Email:    usr.Email,
-		Location: func() string { if usr.Location.Valid { return usr.Location.String }; return "" }(),
+		Location: func() string {
+			if usr.Location.Valid {
+				return usr.Location.String
+			}
+			return ""
+		}(),
 	}, nil
 }
 
