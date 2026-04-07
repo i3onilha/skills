@@ -6,30 +6,58 @@ This file contains the complete contents for every file in a new Clean Architect
 
 - **Module**: `<app-name>` — replace with the user's chosen name (e.g. `my-api`, `go-sales`)
 - **Go version**: 1.25.1
-- **Database**: MySQL 8.0 (via `github.com/go-sql-driver/mysql`)
+- **Database engine**: Determined during Step 0 — one of:
+  - **PostgreSQL** (stable, default) — via `github.com/jackc/pgx/v5`
+  - **MySQL** (stable) — via `github.com/go-sql-driver/mysql`
+  - **SQLite** (beta) — via `modernc.org/sqlite`
 - **Web framework**: Gin + CORS
 - **DI**: Uber FX
 - **Config**: Viper
 - **SQL codegen**: sqlc v2
 - **Logger**: `github.com/adityaeka26/go-pkg`
 
+> **Engine variable convention:** Throughout this file, `<engine>` resolves to `postgresql`, `mysql`, or `sqlite` based on the user's choice. All paths like `internal/repository/<engine>/` use the lowercase engine name. SQL dialect differences are noted per engine.
+
 ## File-by-file contents
 
 ### `go.mod` and `go.sum`
 
-Initialize with `go mod init <app-name>`, then add dependencies:
+Initialize with `go mod init <app-name>`, then add dependencies.
+
+**Common dependencies:**
 ```
 github.com/adityaeka26/go-pkg v0.9.9
 github.com/gin-contrib/cors v1.7.7
 github.com/gin-gonic/gin v1.11.0
-github.com/go-sql-driver/mysql v1.9.3
 github.com/shopspring/decimal v1.4.0
 github.com/spf13/viper v1.19.0
 go.uber.org/fx v1.24.0
 ```
+
+**Engine-specific driver (choose one):**
+- **PostgreSQL:** `github.com/jackc/pgx/v5 v5.7.1`
+- **MySQL:** `github.com/go-sql-driver/mysql v1.9.3`
+- **SQLite:** `modernc.org/sqlite v1.34.1`
+
 Run `go mod tidy` to resolve transitive deps and generate `go.sum`.
 
 ### `.env.example`
+
+**For PostgreSQL:**
+```
+APP_ENV=development
+REST_PORT=3000
+APP_VERSION=1.0
+GRACEFUL_PERIOD=0
+POSTGRES_USER=default
+POSTGRES_PASSWORD=secret
+POSTGRES_DATABASE=erp_sales
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+DATABASE_URL=postgres://default:secret@localhost:5432/erp_sales?sslmode=disable
+```
+
+**For MySQL:**
 ```
 APP_ENV=development
 REST_PORT=3000
@@ -42,7 +70,31 @@ MYSQL_ROOT_PASSWORD=root
 MYSQL_DSN=default:secret@tcp(localhost:3306)/erp_sales?parseTime=true
 ```
 
+**For SQLite:**
+```
+APP_ENV=development
+REST_PORT=3000
+APP_VERSION=1.0
+GRACEFUL_PERIOD=0
+SQLITE_PATH=./data/app.db
+```
+
 ### `.env.docker`
+
+**For PostgreSQL:**
+```
+APP_ENV=development
+REST_PORT=3000
+APP_VERSION=1.0
+GRACEFUL_PERIOD=0
+POSTGRES_USER=default
+POSTGRES_PASSWORD=secret
+POSTGRES_DATABASE=erp_sales
+POSTGRES_HOST=postgres_db
+DATABASE_URL=postgres://default:secret@postgres_db:5432/erp_sales?sslmode=disable
+```
+
+**For MySQL:**
 ```
 APP_ENV=development
 REST_PORT=3000
@@ -55,12 +107,16 @@ MYSQL_ROOT_PASSWORD=root
 MYSQL_DSN=default:secret@tcp(mysql_db:3306)/erp_sales?parseTime=true
 ```
 
+> **Note:** SQLite does not need `.env.docker` since it's file-based and doesn't run as a separate container.
+
 ### `.gitignore`
 ```
 tmp/
 .qwen/
 server
 .env
+data/
+*.db
 ```
 
 ### `.air.toml`
@@ -82,6 +138,43 @@ RUN go install github.com/air-verse/air@v1.52.3
 ```
 
 ### `docker-compose.yml`
+
+**For PostgreSQL:**
+```yaml
+services:
+  golang-app:
+    build: .
+    container_name: "golang-app"
+    restart: always
+    ports:
+      - "8080:3000"
+      - "6464:6464"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      - postgres_db
+    volumes:
+      - .:/app
+    command: godoc -http=:6464
+
+  postgres_db:
+    image: postgres:16-alpine
+    container_name: "golang-postgres"
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DATABASE}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+```
+
+**For MySQL:**
 ```yaml
 services:
   golang-app:
@@ -121,7 +214,30 @@ volumes:
   mysql_data:
 ```
 
+> **Note:** SQLite does not need docker-compose since it's embedded. Skip docker-compose for SQLite projects or provide a minimal version without a database service.
+
 ### `sqlc.yaml`
+
+**For PostgreSQL:**
+```yaml
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "internal/repository/postgresql/user/user.sql"
+    schema: "internal/repository/postgresql/schema.sql"
+    gen:
+      go:
+        package: "user"
+        out: "internal/repository/postgresql/user"
+        emit_json_tags: true
+        overrides:
+          - db_type: "numeric"
+            go_type:
+              import: "github.com/shopspring/decimal"
+              type: "Decimal"
+```
+
+**For MySQL:**
 ```yaml
 version: "2"
 sql:
@@ -138,6 +254,20 @@ sql:
             go_type:
               import: "github.com/shopspring/decimal"
               type: "Decimal"
+```
+
+**For SQLite:**
+```yaml
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "internal/repository/sqlite/user/user.sql"
+    schema: "internal/repository/sqlite/schema.sql"
+    gen:
+      go:
+        package: "user"
+        out: "internal/repository/sqlite/user"
+        emit_json_tags: true
 ```
 
 ### `config/config.go`
@@ -161,7 +291,9 @@ type EnvConfig struct {
 	RestPort       string `mapstructure:"REST_PORT"`
 	AppVersion     string `mapstructure:"APP_VERSION"`
 	GracefulPeriod int    `mapstructure:"GRACEFUL_PERIOD"`
-	DSN            string `mapstructure:"MYSQL_DSN"`
+	DatabaseURL string `mapstructure:"DATABASE_URL"`
+	DSN string `mapstructure:"MYSQL_DSN"`
+	SQLitePath string `mapstructure:"SQLITE_PATH"`
 }
 
 func GetConfig() *EnvConfig {
@@ -190,15 +322,65 @@ func loadConfig() *EnvConfig {
 }
 ```
 
-### `internal/repository/mysql/schema.sql`
+### `internal/repository/<engine>/schema.sql`
 
-Full MySQL dump with 3 tables and seed data:
+> **Dialect note:** The schema below uses PostgreSQL syntax. Adjust for MySQL or SQLite as noted.
 
+**For PostgreSQL:**
 ```sql
--- MySQL dump 10.13  Distrib 8.0.33, for Linux (x86_64)
--- Host: localhost    Database: erp_sales
+DROP TABLE IF EXISTS discounts CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
 
+CREATE TABLE users (
+  user_id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  location VARCHAR(255)
+);
+
+CREATE TABLE orders (
+  order_id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  item VARCHAR(255) NOT NULL,
+  quantity INT NOT NULL,
+  price NUMERIC(10,2) NOT NULL
+);
+
+CREATE TABLE discounts (
+  discount_id SERIAL PRIMARY KEY,
+  order_id INT NOT NULL REFERENCES orders(order_id) ON DELETE CASCADE,
+  discount_percent NUMERIC(5,2) NOT NULL,
+  description VARCHAR(255)
+);
+
+-- Seed data
+INSERT INTO users (user_id, name, email, location) VALUES
+  (1, 'Alice Johnson', 'alice@example.com', 'New York'),
+  (2, 'Bob Smith', 'bob@example.com', 'Los Angeles'),
+  (3, 'Charlie Brown', 'charlie@example.com', 'Chicago'),
+  (4, 'Diana Prince', 'diana@example.com', 'Miami');
+
+INSERT INTO orders (order_id, user_id, item, quantity, price) VALUES
+  (1, 1, 'Laptop', 1, 1200.00),
+  (2, 1, 'Mouse', 2, 25.50),
+  (3, 2, 'Keyboard', 1, 75.00),
+  (4, 3, 'Monitor', 2, 300.00),
+  (5, 4, 'Headphones', 1, 150.00),
+  (6, 2, 'Webcam', 1, 90.00);
+
+INSERT INTO discounts (discount_id, order_id, discount_percent, description) VALUES
+  (1, 1, 10.00, 'Promo on laptop'),
+  (2, 3, 5.00, 'Keyboard sale'),
+  (3, 4, 15.00, 'Bulk monitor discount');
+```
+
+**For MySQL:**
+```sql
+DROP TABLE IF EXISTS `discounts`;
+DROP TABLE IF EXISTS `orders`;
 DROP TABLE IF EXISTS `users`;
+
 CREATE TABLE `users` (
   `user_id` int NOT NULL AUTO_INCREMENT,
   `name` varchar(100) NOT NULL,
@@ -208,11 +390,6 @@ CREATE TABLE `users` (
   UNIQUE KEY `email` (`email`)
 ) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-LOCK TABLES `users` WRITE;
-INSERT INTO `users` VALUES (1,'Alice Johnson','alice@example.com','New York'),(2,'Bob Smith','bob@example.com','Los Angeles'),(3,'Charlie Brown','charlie@example.com','Chicago'),(4,'Diana Prince','diana@example.com','Miami');
-UNLOCK TABLES;
-
-DROP TABLE IF EXISTS `orders`;
 CREATE TABLE `orders` (
   `order_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
@@ -224,11 +401,6 @@ CREATE TABLE `orders` (
   CONSTRAINT `orders_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-LOCK TABLES `orders` WRITE;
-INSERT INTO `orders` VALUES (1,1,'Laptop',1,1200.00),(2,1,'Mouse',2,25.50),(3,2,'Keyboard',1,75.00),(4,3,'Monitor',2,300.00),(5,4,'Headphones',1,150.00),(6,2,'Webcam',1,90.00);
-UNLOCK TABLES;
-
-DROP TABLE IF EXISTS `discounts`;
 CREATE TABLE `discounts` (
   `discount_id` int NOT NULL AUTO_INCREMENT,
   `order_id` int NOT NULL,
@@ -239,13 +411,83 @@ CREATE TABLE `discounts` (
   CONSTRAINT `discounts_ibfk_1` FOREIGN KEY (`order_id`) REFERENCES `orders` (`order_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-LOCK TABLES `discounts` WRITE;
+-- Seed data
+INSERT INTO `users` VALUES (1,'Alice Johnson','alice@example.com','New York'),(2,'Bob Smith','bob@example.com','Los Angeles'),(3,'Charlie Brown','charlie@example.com','Chicago'),(4,'Diana Prince','diana@example.com','Miami');
+
+INSERT INTO `orders` VALUES (1,1,'Laptop',1,1200.00),(2,1,'Mouse',2,25.50),(3,2,'Keyboard',1,75.00),(4,3,'Monitor',2,300.00),(5,4,'Headphones',1,150.00),(6,2,'Webcam',1,90.00);
+
 INSERT INTO `discounts` VALUES (1,1,10.00,'Promo on laptop'),(2,3,5.00,'Keyboard sale'),(3,4,15.00,'Bulk monitor discount');
-UNLOCK TABLES;
 ```
 
-### `internal/repository/mysql/user/user.sql`
+**For SQLite:**
+```sql
+DROP TABLE IF EXISTS discounts;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS users;
 
+CREATE TABLE users (
+  user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  location TEXT
+);
+
+CREATE TABLE orders (
+  order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(user_id),
+  item TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  price REAL NOT NULL
+);
+
+CREATE TABLE discounts (
+  discount_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(order_id),
+  discount_percent REAL NOT NULL,
+  description TEXT
+);
+
+-- Seed data
+INSERT INTO users (user_id, name, email, location) VALUES
+  (1, 'Alice Johnson', 'alice@example.com', 'New York'),
+  (2, 'Bob Smith', 'bob@example.com', 'Los Angeles'),
+  (3, 'Charlie Brown', 'charlie@example.com', 'Chicago'),
+  (4, 'Diana Prince', 'diana@example.com', 'Miami');
+
+INSERT INTO orders (order_id, user_id, item, quantity, price) VALUES
+  (1, 1, 'Laptop', 1, 1200.00),
+  (2, 1, 'Mouse', 2, 25.50),
+  (3, 2, 'Keyboard', 1, 75.00),
+  (4, 3, 'Monitor', 2, 300.00),
+  (5, 4, 'Headphones', 1, 150.00),
+  (6, 2, 'Webcam', 1, 90.00);
+
+INSERT INTO discounts (discount_id, order_id, discount_percent, description) VALUES
+  (1, 1, 10.00, 'Promo on laptop'),
+  (2, 3, 5.00, 'Keyboard sale'),
+  (3, 4, 15.00, 'Bulk monitor discount');
+```
+
+### `internal/repository/<engine>/user/user.sql`
+
+**For PostgreSQL:**
+```sql
+-- name: GetUserByID :one
+SELECT user_id, name, email, location FROM users
+WHERE user_id = $1;
+
+-- name: GetOrdersByUserID :many
+SELECT o.order_id, o.user_id, o.item, o.quantity, o.price,
+       COALESCE(SUM(d.discount_percent), 0) as discount_percent
+FROM orders o
+LEFT JOIN discounts d ON o.order_id = d.order_id
+WHERE o.user_id = $1
+GROUP BY o.order_id, o.user_id, o.item, o.quantity, o.price
+ORDER BY o.order_id
+LIMIT $2 OFFSET $3;
+```
+
+**For MySQL:**
 ```sql
 -- name: GetUserByID :one
 SELECT user_id, name, email, location FROM users
@@ -253,7 +495,7 @@ WHERE user_id = ?;
 
 -- name: GetOrdersByUserID :many
 SELECT o.order_id, o.user_id, o.item, o.quantity, o.price,
-	   CAST(COALESCE(SUM(d.discount_percent), 0) AS DECIMAL(5,2)) as discount_percent
+       COALESCE(SUM(d.discount_percent), 0) as discount_percent
 FROM orders o
 LEFT JOIN discounts d ON o.order_id = d.order_id
 WHERE o.user_id = ?
@@ -262,8 +504,58 @@ ORDER BY o.order_id
 LIMIT ? OFFSET ?;
 ```
 
-### `internal/repository/mysql/conn.go`
+**For SQLite:**
+```sql
+-- name: GetUserByID :one
+SELECT user_id, name, email, location FROM users
+WHERE user_id = ?;
 
+-- name: GetOrdersByUserID :many
+SELECT o.order_id, o.user_id, o.item, o.quantity, o.price,
+       COALESCE(SUM(d.discount_percent), 0) as discount_percent
+FROM orders o
+LEFT JOIN discounts d ON o.order_id = d.order_id
+WHERE o.user_id = ?
+GROUP BY o.order_id, o.user_id, o.item, o.quantity, o.price
+ORDER BY o.order_id
+LIMIT ? OFFSET ?;
+```
+
+### `internal/repository/<engine>/conn.go`
+
+**For PostgreSQL (using pgx/v5):**
+```go
+package postgresql
+
+import (
+	"context"
+	"database/sql"
+	"<app-name>/config"
+	"time"
+
+	"github.com/jackc/pgx/v5/stdlib"
+)
+
+func Open() (*sql.DB, error) {
+	dsn := config.GetConfig().DatabaseURL
+	db := stdlib.OpenDBFromDSN(dsn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	return db, nil
+}
+```
+
+> **Alternative PostgreSQL driver (`lib/pq`):** If using `lib/pq`, replace the import with `_ "github.com/lib/pq"` and use `sql.Open("postgres", dsn)`.
+
+**For MySQL:**
 ```go
 package mysql
 
@@ -272,6 +564,7 @@ import (
 	"database/sql"
 	"<app-name>/config"
 	"time"
+
 	_ "github.com/go-sql-driver/mysql"
 )
 
@@ -295,6 +588,44 @@ func Open() (*sql.DB, error) {
 }
 ```
 
+**For SQLite:**
+```go
+package sqlite
+
+import (
+	"database/sql"
+	"<app-name>/config"
+	"os"
+	"path/filepath"
+
+	_ "modernc.org/sqlite"
+)
+
+func Open() (*sql.DB, error) {
+	dbPath := config.GetConfig().SQLitePath
+	if dbPath == "" {
+		dbPath = "./data/app.db"
+	}
+	// Ensure directory exists
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	// Enable WAL mode for better concurrency
+	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	db.SetMaxOpenConns(1) // SQLite is file-based; 1 connection is optimal
+	db.SetMaxIdleConns(1)
+	return db, nil
+}
+```
+
 ### `internal/repository/repository.go`
 
 ```go
@@ -311,17 +642,17 @@ type UserRepository interface {
 }
 ```
 
-### `internal/repository/mysql/user_repository.go`
+### `internal/repository/<engine>/user_repository.go`
 
 ```go
-package mysql
+package <engine>
 
 import (
 	"context"
 	"database/sql"
 	"<app-name>/internal/domain"
 	"<app-name>/internal/repository"
-	"<app-name>/internal/repository/mysql/user"
+	"<app-name>/internal/repository/<engine>/user"
 )
 
 type userRepository struct {
@@ -585,6 +916,7 @@ func (h *UserController) GetUserWithOrders(c *gin.Context) {
 
 ### `cmd/server/server.go`
 
+**For PostgreSQL:**
 ```go
 package main
 
@@ -593,7 +925,7 @@ import (
 	"database/sql"
 	"<app-name>/config"
 	"<app-name>/internal/controller"
-	"<app-name>/internal/repository/mysql"
+	"<app-name>/internal/repository/postgresql"
 	"<app-name>/internal/usecase"
 	"log"
 	"net/http"
@@ -650,7 +982,6 @@ func runServer(lc fx.Lifecycle, router *gin.Engine, db *sql.DB) {
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			// Check if server failed to start
 			select {
 			case err := <-errCh:
 				log.Printf("Server failed to start: %v", err)
@@ -684,8 +1015,8 @@ func main() {
 	app := fx.New(
 		fx.Provide(
 			logger.NewLogger,
-			mysql.Open,
-			mysql.NewUserRepository,
+			postgresql.Open,
+			postgresql.NewUserRepository,
 			usecase.NewUserUsecase,
 			controller.NewUserController,
 			newRouter,
@@ -696,10 +1027,35 @@ func main() {
 }
 ```
 
+**For MySQL:** Same as above, but change the import and provide:
+```go
+"<app-name>/internal/repository/mysql"
+// ...
+fx.Provide(
+    logger.NewLogger,
+    mysql.Open,
+    mysql.NewUserRepository,
+    // ...
+),
+```
+
+**For SQLite:** Same as above, but change the import and provide:
+```go
+"<app-name>/internal/repository/sqlite"
+// ...
+fx.Provide(
+    logger.NewLogger,
+    sqlite.Open,
+    sqlite.NewUserRepository,
+    // ...
+),
+```
+
 ## After creating all files
 
 1. Run `go mod tidy`
-2. Run `sqlc generate` — this produces `internal/repository/mysql/user/models.go`, `db.go`, `user.sql.go`
-3. Build: `go build ./cmd/server/server.go`
-4. Copy `.env.example` to `.env` and configure the DSN
-5. Start MySQL, then run the app or `docker-compose up -d`
+2. Run `sqlc generate` — this produces `internal/repository/<engine>/user/models.go`, `db.go`, `user.sql.go`
+3. Run `gofmt -s -w .` to simplify and format all Go files
+4. Build: `go build ./cmd/server/server.go`
+5. Copy `.env.example` to `.env` and configure the connection
+6. Start the database (if applicable), then run the app or `docker-compose up -d`

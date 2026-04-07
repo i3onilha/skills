@@ -2,10 +2,10 @@
 name: go-clean-arch
 description: >
   Scaffold a Go REST API project following Clean Architecture with sqlc, Gin, Uber FX (DI),
-  Viper config, Docker, and Air hot-reload. Use this skill whenever the user wants to create
-  a new Go Clean Architecture project from scratch, bootstrap a go-clean-arch-style repo,
-  or add a new domain resource (e.g. "Create a USER resource", "add a Product entity",
-  "scaffold an Order service", "set up a Go API with sqlc and clean layers").
+  Viper config, Docker, and Air hot-reload. Supports all sqlc engines: PostgreSQL, MySQL, and SQLite.
+  Use this skill whenever the user wants to create a new Go Clean Architecture project from scratch,
+  bootstrap a go-clean-arch-style repo, or add a new domain resource (e.g. "Create a USER resource",
+  "add a Product entity", "scaffold an Order service", "set up a Go API with sqlc and clean layers").
   Also use when the user mentions clean architecture in Go, layered Go projects,
   sqlc code generation for Go, or wants Go boilerplate with domain/dto/controller/usecase/repository layers.
 ---
@@ -22,21 +22,26 @@ Determine which scenario applies, then follow the appropriate workflow below.
 
 ## Workflow A: Full Boilerplate
 
-When the user asks to create the entire project from scratch, follow these steps:
+### Step 0: Ask for the app name and database engine
 
-### Step 0: Ask for the app name
+Before scaffolding, ask the user two questions:
+1. **"What should the app/module be named?"** (e.g. `my-api`, `go-sales`, `inventory-service`). Use their answer as the module name throughout all files (`go.mod`, imports, etc.). If they don't have a preference, suggest a reasonable default based on their project context.
+2. **"Which database engine should I use?"** Offer the three sqlc-supported options:
+   - **PostgreSQL** (stable, recommended for production) — uses `github.com/lib/pq` or `github.com/jackc/pgx/v5` driver
+   - **MySQL** (stable) — uses `github.com/go-sql-driver/mysql` driver
+   - **SQLite** (beta, good for local/dev or embedded apps) — uses `modernc.org/sqlite` driver
 
-Before scaffolding, ask the user: **"What should the app/module be named?"** (e.g. `my-api`, `go-sales`, `inventory-service`). Use their answer as the module name throughout all files (`go.mod`, imports, etc.). If they don't have a preference, suggest a reasonable default based on their project context.
+If the user doesn't have a preference, default to **PostgreSQL**.
 
 ### Step 1: Scaffold the project
 
-Follow the detailed prompt in `references/full-boilerplate.md`, replacing all occurrences of `go-clean-example` with the user's chosen app name. This will scaffold:
+Follow the detailed prompt in `references/full-boilerplate.md`, adapting all database-specific content for the chosen engine. This will scaffold:
 
 - Go module (`go.mod`), `cmd/server/server.go` with Uber FX DI
 - All layer directories: `internal/controller/`, `internal/usecase/`, `internal/domain/`, `internal/dto/`, `internal/repository/`
-- MySQL connection pool (`internal/repository/mysql/conn.go`)
-- Database schema with seed data (`schema.sql`)
-- sqlc config (`sqlc.yaml`) and initial `.sql` query file
+- Database connection pool (`internal/repository/<engine>/conn.go`) — engine-specific setup
+- Database schema with seed data (`schema.sql`) — engine-specific SQL dialect
+- sqlc config (`sqlc.yaml`) with the correct engine and initial `.sql` query file
 - Config loading via Viper (`config/config.go`)
 - Docker Compose, Dockerfile, `.env.example`, `.air.toml`, `.gitignore`
 - A working `USER` resource as the example (with orders + discounts)

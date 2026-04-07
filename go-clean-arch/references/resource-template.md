@@ -4,14 +4,29 @@ This file provides templates and patterns for adding a new resource to an existi
 
 > **⚠️ Module name substitution:** Replace `<app-name>` with your actual module name from `go.mod` in all import paths throughout this file. Copy-pasting these templates without substitution will produce uncompilable code.
 
+> **Engine variable:** `<engine>` resolves to `postgresql`, `mysql`, or `sqlite` based on the project's chosen database engine. Paths like `internal/repository/<engine>/` use the lowercase engine name. SQL dialect differences are noted where applicable.
+
 ---
 
 ## Step-by-step workflow
 
 ### 1. Design the schema
 
-Add tables to `internal/repository/mysql/schema.sql`. Follow this pattern:
+Add tables to `internal/repository/<engine>/schema.sql`. Follow this pattern:
 
+**For PostgreSQL:**
+```sql
+-- ⚠️ WARNING: DROP TABLE IF EXISTS destroys all existing data in the table.
+-- This pattern is for initial setup only. For incremental schema changes to an
+-- existing database, use ALTER TABLE instead to avoid data loss.
+DROP TABLE IF EXISTS <resource_plural> CASCADE;
+CREATE TABLE <resource_plural> (
+  <resource_id>_id SERIAL PRIMARY KEY,
+  -- columns based on fields
+);
+```
+
+**For MySQL:**
 ```sql
 -- ⚠️ WARNING: DROP TABLE IF EXISTS destroys all existing data in the table.
 -- This pattern is for initial setup only. For incremental schema changes to an
@@ -24,14 +39,39 @@ CREATE TABLE `<resource_plural>` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 ```
 
+**For SQLite:**
+```sql
+-- ⚠️ WARNING: DROP TABLE IF EXISTS destroys all existing data in the table.
+-- This pattern is for initial setup only. For incremental schema changes to an
+-- existing database, use ALTER TABLE instead to avoid data loss.
+DROP TABLE IF EXISTS <resource_plural>;
+CREATE TABLE <resource_plural> (
+  <resource_id>_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- columns based on fields
+);
+```
+
 Include seed data if helpful for testing.
 
 ### 2. Write SQL queries
 
-Create `internal/repository/mysql/<resource>/` directory (lowercase, singular).
+Create `internal/repository/<engine>/<resource>/` directory (lowercase, singular).
 
 Create `<resource>.sql` with named queries:
 
+**For PostgreSQL (uses `$1`, `$2` placeholders):**
+```sql
+-- name: Get<Resource>ByID :one
+SELECT <columns> FROM <table>
+WHERE <resource_id>_id = $1;
+
+-- name: Get<Resources>By<Condition> :many
+SELECT <columns> FROM <table>
+WHERE <condition>
+LIMIT $2 OFFSET $3;
+```
+
+**For MySQL and SQLite (uses `?` placeholders):**
 ```sql
 -- name: Get<Resource>ByID :one
 SELECT <columns> FROM <table>
@@ -43,7 +83,7 @@ WHERE <condition>
 LIMIT ? OFFSET ?;
 ```
 
-> **Pagination:** All `:many` queries must include `LIMIT ? OFFSET ?` to prevent unbounded result sets that can cause memory exhaustion, slow responses, or denial-of-service.
+> **Pagination:** All `:many` queries must include `LIMIT ? OFFSET ?` (or `$N` for PostgreSQL) to prevent unbounded result sets that can cause memory exhaustion, slow responses, or denial-of-service.
 
 sqlc directives:
 - `:one` — returns a single row
@@ -53,8 +93,26 @@ sqlc directives:
 
 Then update `sqlc.yaml` to include the new `.sql` file. Add a new entry to the `sql` array:
 
+**For PostgreSQL:**
 ```yaml
-  - engine: "mysql"                                    # ← Append this to the existing sql: array
+  - engine: "postgresql"                                 # ← Append this to the existing sql: array
+    queries: "internal/repository/postgresql/<resource>/<resource>.sql"
+    schema: "internal/repository/postgresql/schema.sql"
+    gen:
+      go:
+        package: "<resource>"
+        out: "internal/repository/postgresql/<resource>"
+        emit_json_tags: true
+        overrides:
+          - db_type: "numeric"
+            go_type:
+              import: "github.com/shopspring/decimal"
+              type: "Decimal"
+```
+
+**For MySQL:**
+```yaml
+  - engine: "mysql"                                      # ← Append this to the existing sql: array
     queries: "internal/repository/mysql/<resource>/<resource>.sql"
     schema: "internal/repository/mysql/schema.sql"
     gen:
@@ -67,6 +125,18 @@ Then update `sqlc.yaml` to include the new `.sql` file. Add a new entry to the `
             go_type:
               import: "github.com/shopspring/decimal"
               type: "Decimal"
+```
+
+**For SQLite:**
+```yaml
+  - engine: "sqlite"                                     # ← Append this to the existing sql: array
+    queries: "internal/repository/sqlite/<resource>/<resource>.sql"
+    schema: "internal/repository/sqlite/schema.sql"
+    gen:
+      go:
+        package: "<resource>"
+        out: "internal/repository/sqlite/<resource>"
+        emit_json_tags: true
 ```
 
 Run `sqlc generate` to produce the Go files.
@@ -163,10 +233,10 @@ Key rules:
 
 ### 6. Repository implementation
 
-`internal/repository/mysql/<resource>_repository.go`:
+`internal/repository/<engine>/<resource>_repository.go`:
 
 ```go
-package mysql
+package <engine>
 
 import (
     "context"
@@ -174,7 +244,7 @@ import (
     "errors"
     "<app-name>/internal/domain"
     "<app-name>/internal/repository"
-    "<app-name>/internal/repository/mysql/<resource>"
+    "<app-name>/internal/repository/<engine>/<resource>"
 )
 
 type <resource>Repository struct {
@@ -397,7 +467,7 @@ Update `cmd/server/server.go`:
 
 In `fx.Provide(...)`, add:
 ```go
-mysql.New<Resource>Repository,
+<engine>.New<Resource>Repository,
 usecase.New<Resource>Usecase,
 controller.New<Resource>Controller,
 ```
