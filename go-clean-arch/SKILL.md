@@ -22,7 +22,15 @@ Determine which scenario applies, then follow the appropriate workflow below.
 
 ## Workflow A: Full Boilerplate
 
-When the user asks to create the entire project from scratch, follow the detailed prompt in `references/full-boilerplate.md`. This will scaffold:
+When the user asks to create the entire project from scratch, follow these steps:
+
+### Step 0: Ask for the app name
+
+Before scaffolding, ask the user: **"What should the app/module be named?"** (e.g. `my-api`, `go-sales`, `inventory-service`). Use their answer as the module name throughout all files (`go.mod`, imports, etc.). If they don't have a preference, suggest a reasonable default based on their project context.
+
+### Step 1: Scaffold the project
+
+Follow the detailed prompt in `references/full-boilerplate.md`, replacing all occurrences of `go-clean-example` with the user's chosen app name. This will scaffold:
 
 - Go module (`go.mod`), `cmd/server/server.go` with Uber FX DI
 - All layer directories: `internal/controller/`, `internal/usecase/`, `internal/domain/`, `internal/dto/`, `internal/repository/`

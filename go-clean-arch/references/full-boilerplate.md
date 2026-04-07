@@ -4,7 +4,7 @@ This file contains the complete contents for every file in a new Clean Architect
 
 ## Project Overview
 
-- **Module**: `go-clean-example` (adjust module name as needed)
+- **Module**: `<app-name>` — replace with the user's chosen name (e.g. `my-api`, `go-sales`)
 - **Go version**: 1.25.1
 - **Database**: MySQL 8.0 (via `github.com/go-sql-driver/mysql`)
 - **Web framework**: Gin + CORS
@@ -17,7 +17,7 @@ This file contains the complete contents for every file in a new Clean Architect
 
 ### `go.mod` and `go.sum`
 
-Initialize with `go mod init go-clean-example`, then add dependencies:
+Initialize with `go mod init <app-name>`, then add dependencies:
 ```
 github.com/adityaeka26/go-pkg v0.9.9
 github.com/gin-contrib/cors v1.7.7
@@ -270,7 +270,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"go-clean-example/config"
+	"<app-name>/config"
 	"time"
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -302,7 +302,7 @@ package repository
 
 import (
 	"context"
-	"go-clean-example/internal/domain"
+	"<app-name>/internal/domain"
 )
 
 type UserRepository interface {
@@ -319,9 +319,9 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"go-clean-example/internal/domain"
-	"go-clean-example/internal/repository"
-	"go-clean-example/internal/repository/mysql/user"
+	"<app-name>/internal/domain"
+	"<app-name>/internal/repository"
+	"<app-name>/internal/repository/mysql/user"
 )
 
 type userRepository struct {
@@ -449,7 +449,7 @@ package usecase
 
 import (
 	"context"
-	"go-clean-example/internal/dto"
+	"<app-name>/internal/dto"
 )
 
 type UserUsecase interface {
@@ -465,8 +465,8 @@ package usecase
 import (
 	"context"
 	"time"
-	"go-clean-example/internal/dto"
-	"go-clean-example/internal/repository"
+	"<app-name>/internal/dto"
+	"<app-name>/internal/repository"
 	"github.com/adityaeka26/go-pkg/logger"
 )
 
@@ -525,7 +525,7 @@ package controller
 import (
 	"database/sql"
 	"errors"
-	"go-clean-example/internal/usecase"
+	"<app-name>/internal/usecase"
 	"net/http"
 	"strconv"
 	"github.com/gin-gonic/gin"
@@ -591,10 +591,10 @@ package main
 import (
 	"context"
 	"database/sql"
-	"go-clean-example/config"
-	"go-clean-example/internal/controller"
-	"go-clean-example/internal/repository/mysql"
-	"go-clean-example/internal/usecase"
+	"<app-name>/config"
+	"<app-name>/internal/controller"
+	"<app-name>/internal/repository/mysql"
+	"<app-name>/internal/usecase"
 	"log"
 	"net/http"
 	"time"

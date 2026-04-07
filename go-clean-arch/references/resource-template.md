@@ -2,7 +2,7 @@
 
 This file provides templates and patterns for adding a new resource to an existing Clean Architecture Go project. Use this when the user says something like "Create a PRODUCT resource" or "Add a Category entity."
 
-> **⚠️ Module name substitution:** Replace `go-clean-example` with your actual module name from `go.mod` in all import paths throughout this file. Copy-pasting these templates without substitution will produce uncompilable code.
+> **⚠️ Module name substitution:** Replace `<app-name>` with your actual module name from `go.mod` in all import paths throughout this file. Copy-pasting these templates without substitution will produce uncompilable code.
 
 ---
 
@@ -146,7 +146,7 @@ package repository
 
 import (
     "context"
-    "go-clean-example/internal/domain"
+    "<app-name>/internal/domain"
 )
 
 type <Resource>Repository interface {
@@ -172,9 +172,9 @@ import (
     "context"
     "database/sql"
     "errors"
-    "go-clean-example/internal/domain"
-    "go-clean-example/internal/repository"
-    "go-clean-example/internal/repository/mysql/<resource>"
+    "<app-name>/internal/domain"
+    "<app-name>/internal/repository"
+    "<app-name>/internal/repository/mysql/<resource>"
 )
 
 type <resource>Repository struct {
@@ -231,7 +231,7 @@ package usecase
 
 import (
     "context"
-    "go-clean-example/internal/dto"  // or domain if no DTO
+    "<app-name>/internal/dto"  // or domain if no DTO
 )
 
 type <Resource>Usecase interface {
@@ -254,8 +254,8 @@ package usecase
 import (
     "context"
     "time"
-    "go-clean-example/internal/dto"
-    "go-clean-example/internal/repository"
+    "<app-name>/internal/dto"
+    "<app-name>/internal/repository"
     "github.com/adityaeka26/go-pkg/logger"
 )
 
@@ -337,8 +337,8 @@ import (
     "math"
     "net/http"
     "strconv"
-    "go-clean-example/internal/domain"
-    "go-clean-example/internal/usecase"
+    "<app-name>/internal/domain"
+    "<app-name>/internal/usecase"
     "github.com/gin-gonic/gin"
 )
 
