@@ -650,6 +650,7 @@ package <engine>
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"<app-name>/internal/domain"
 	"<app-name>/internal/repository"
 	"<app-name>/internal/repository/<engine>/user"
@@ -666,7 +667,9 @@ func NewUserRepository(db *sql.DB) repository.UserRepository {
 func (r *userRepository) GetUserInfo(ctx context.Context, userID int32) (*domain.GetUserInfoResponse, error) {
 	usr, err := r.query.GetUserByID(ctx, userID)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+            return nil, domain.ErrNotFound
+        }
 	}
 	return &domain.GetUserInfoResponse{
 		UserID:   usr.UserID,
