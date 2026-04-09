@@ -52,7 +52,11 @@ After creating all files:
 3. Run `gofmt -s -w .` to simplify and format all Go files
 4. Verify the build: `go build ./cmd/server/server.go`
 
-**Then ask the user**: "The boilerplate is ready. Would you like me to add any additional resources on top of it?"
+**Then ask the user**: "The boilerplate is ready. Would you like me to generate mock repository implementations for testing? This will create mock repositories with embedded JSON data files, enabling fast, database-free unit tests."
+
+If the user confirms, follow the mock generation workflow in **Workflow C: Generate Mocks** below.
+
+After the boilerplate (and optional mocks) are ready, ask: "Would you like me to add any additional resources on top of it?"
 
 ---
 
@@ -122,6 +126,213 @@ Add the new `.sql` file path to `sqlc.yaml` under the `sql` array so sqlc picks 
 2. Run `sqlc generate` (if you added/modified `.sql` files)
 3. Run `gofmt -s -w .` to simplify and format all Go files
 4. Build: `go build ./cmd/server/server.go`
+
+**Then ask the user**: "Would you like me to generate mock repository implementations for the <Resource> resource alongside the real implementation? This will create mock repositories with embedded JSON data files, enabling fast, database-free unit tests."
+
+If the user confirms, follow the mock generation workflow in **Workflow C: Generate Mocks** below.
+
+---
+
+## Workflow C: Generate Mocks
+
+When the user confirms they want mock repository implementations (either after boilerplate creation or after adding a resource), follow the workflow defined in the **mock** skill. Specifically:
+
+### Step 1: Identify resources to mock
+
+- **After boilerplate**: Generate mocks for all scaffolded resources (e.g., `User` with related `Order` data)
+- **After adding a resource**: Generate mocks for the newly added resource
+
+### Step 2: Create the mock directory structure
+
+Create mocks following this pattern:
+
+```
+internal/repository/mock/
+├── <resource>_repository.go          # Mock repository wrapper implementing real interface
+└── <resource>/                       # Resource-specific mock directory
+    ├── <resource>.go                 # Mock repository with embedded JSON
+    ├── <resource>s.json              # Sample data for primary entity
+    └── <related_entity>.json         # Sample data for related entities (if any)
+```
+
+### Step 3: Generate JSON data files
+
+Create JSON files with realistic sample data using the entity-keyed format (matching `references/mock-template.md`):
+
+```json
+{
+  "<resources>": [
+    {
+      "<resource_id>_id": 1,
+      "name": "Alice Johnson",
+      "email": "alice@example.com"
+    },
+    {
+      "<resource_id>_id": 2,
+      "name": "Bob Smith",
+      "email": "bob@example.com"
+    }
+  ]
+}
+```
+
+Name the file `data.json` (referenced by the `//go:embed data.json` directive in Step 4).
+
+**Rules:**
+- Include **at least 4-6 records** for meaningful test scenarios
+- Use realistic, varied data (different names, emails, locations, etc.)
+- Include edge cases if relevant (null values, empty strings, special characters)
+- IDs should be sequential integers starting from 1
+- For nullable fields, use JSON null or omit the field
+- Decimal/monetary values should be strings to preserve precision (e.g., `"1200.50"`)
+- Dates should use ISO 8601 format (e.g., `"2026-04-15T00:00:00Z"`)
+- Foreign keys should reference valid IDs from the primary entity
+
+### Step 4: Generate the mock repository Go file
+
+Create `<resource>/<resource>.go` with:
+
+```go
+package <resource_lowercase>
+
+import (
+	"context"
+	"database/sql"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+
+	"<app-name>/internal/domain"
+)
+
+// Models — these mirror sqlc-generated types for the <resource> resource.
+type <Resource> struct {
+	<ResourceID> int32          `json:"<resource_id>_id"`
+	Name         string         `json:"name"`
+	Email        string         `json:"email"`
+	Location     sql.NullString `json:"location"`
+	// For monetary/precise values, add: "github.com/shopspring/decimal" import and use decimal.Decimal fields
+}
+
+//go:embed data.json
+var dataJSON string
+
+// Parsed mock data — loaded once at init time
+type mockData struct {
+	<Resources> []<Resource> `json:"<resources>"`
+}
+
+var data mockData
+
+func init() {
+	if err := json.Unmarshal([]byte(dataJSON), &data); err != nil {
+		panic(fmt.Sprintf("mock: failed to unmarshal data.json: %v", err))
+	}
+}
+
+// Mock repository implementation — satisfies repository.<Resource>Repository
+type Mock<Resource>Repository struct{}
+
+func New<Resource>Repository() repository.<Resource>Repository {
+	return &Mock<Resource>Repository{}
+}
+
+func (m *Mock<Resource>Repository) Get<Resource>ByID(ctx context.Context, id int32) (*domain.Get<Resource>Response, error) {
+	for _, item := range data.<Resources> {
+		if item.<ResourceID> == id {
+			return &domain.Get<Resource>Response{
+				<ResourceID>: item.<ResourceID>,
+				Name:        item.Name,
+				Email:       item.Email,
+				// map remaining fields; for sql.NullString: Location: func() string { if item.Location.Valid { return item.Location.String }; return "" }(),
+			}, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+```
+
+**Key patterns:**
+- Use `//go:embed` directives for JSON files
+- Parse JSON **once in `init()`** — do NOT unmarshal on every method call
+- Replicate sqlc-generated struct shapes exactly (including `sql.NullString`, `sql.NullTime`)
+- For monetary fields, add `"github.com/shopspring/decimal"` import and use `decimal.Decimal` types
+- Implement all repository interface methods
+- Return `*domain.Get<Resource>Response` (pointer to domain response), NOT the raw mock struct
+- **CRITICAL BUG TO AVOID:** Return the found item (`return &domain.Get<Resource>Response{...}, nil`), NOT empty struct (`return &domain.Get<Resource>Response{}, nil`)
+- Return `nil, domain.ErrNotFound` for missing records (not `fmt.Errorf`) — controllers map this to HTTP 404
+- Filter queries appropriately if the method accepts params (e.g., limit/offset/userID)
+- Use receiver variable name `m` (conventional for mock implementations)
+
+### Step 5: Generate the mock repository wrapper
+
+Create `<resource>_repository.go` in the `mock/` root:
+
+```go
+package mock
+
+import (
+	"context"
+
+	"<app-name>/internal/domain"
+	"<app-name>/internal/repository"
+	"<app-name>/internal/repository/mock/<resource>"
+)
+
+type <resource>Repository struct {
+	query <resource>.Mock<Resource>Repository
+}
+
+func New<Resource>Repository() repository.<Resource>Repository {
+	return &<resource>Repository{query: <resource>.Mock<Resource>Repository{}}
+}
+
+func (r *<resource>Repository) Get<Resource>ByID(ctx context.Context, id int32) (*domain.Get<Resource>Response, error) {
+	item, err := r.query.Get<Resource>ByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.Get<Resource>Response{
+		<ResourceID>: item.<ResourceID>,
+		Name:         item.Name,
+		Email:        item.Email,
+		// map remaining fields; handle sql.Null* conversions as needed
+	}, nil
+}
+```
+
+**Key patterns:**
+- Wrapper implements the actual `repository.<Resource>Repository` interface
+- Delegates to the embedded mock implementation
+- Maps mock types → domain types (handling `sql.Null*`, type conversions)
+- Response shapes match what the real repository would return
+
+### Step 6: Verify integration
+
+After generating mocks:
+
+1. **Check interface compliance**:
+   ```bash
+   go build ./...
+   ```
+
+2. **Optionally generate a basic unit test** demonstrating mock usage:
+   ```go
+   func TestMockUserRepositoryGetUserByID(t *testing.T) {
+       repo := mock.NewUserRepository()
+       ctx := context.Background()
+
+       user, err := repo.GetUserInfo(ctx, 1)
+       if err != nil {
+           t.Fatalf("unexpected error: %v", err)
+       }
+       if user.UserID != 1 {
+           t.Errorf("expected user ID 1, got %d", user.UserID)
+       }
+   }
+   ```
+
+3. Run `gofmt -s -w .` to format
 
 ---
 
